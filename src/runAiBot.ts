@@ -16,6 +16,7 @@ import {
   text_input
 } from './modules/clickers_and_finders';
 import { validate_config } from './modules/validator';
+import { get_cached_answer, set_cached_answer } from './modules/ai/answerCache';
 
 // Config imports
 import * as personals from './config/personals';
@@ -188,6 +189,8 @@ function answer_common_questions(label: string, answer: string): string {
 }
 
 // Ask the configured AI provider to answer a form question. Returns "" if AI is disabled or fails.
+// Answers to short questions are cached and reused across jobs; only open-ended (textarea) questions
+// get the job description, trimmed, since they're the only ones whose answer depends on the job.
 async function ask_ai(
   label: string,
   options: string[] | null,
@@ -195,18 +198,37 @@ async function ask_ai(
   jobDescription: string | null,
 ): Promise<string> {
   if (!secrets.use_AI || !aiClient) return "";
+  const cacheable = questionType !== 'textarea';
+  if (cacheable) {
+    const cached = get_cached_answer(label, questionType, options);
+    if (cached !== null) return cached;
+  }
   const answerFn =
     secrets.ai_provider === "openai" ? _ai_answer_question :
     secrets.ai_provider === "deepseek" ? _deepseek_answer_question :
     secrets.ai_provider === "gemini" ? _gemini_answer_question : null;
   if (!answerFn) return "";
+  const description = questionType === 'textarea' && jobDescription
+    ? jobDescription.slice(0, settings.ai_max_description_chars)
+    : null;
   try {
-    const answer = await answerFn(aiClient, label, options, questionType, jobDescription || undefined, null, questions.user_information_all);
-    return String(answer ?? "").trim();
+    const answer = String((await answerFn(aiClient, label, options, questionType, description, null, questions.user_information_all)) ?? "").trim();
+    if (cacheable && answer && (!options || match_option(options, answer) !== -1)) {
+      set_cached_answer(label, questionType, options, answer);
+    }
+    return answer;
   } catch (e) {
     print_lg("Failed to get AI answer!", e as any);
     return "";
   }
+}
+
+// Years of experience for a skill named in the question, from SKILL_EXPERIENCE config
+function skill_years(labelLow: string): string | null {
+  for (const [skill, years] of Object.entries(questions.skill_experience)) {
+    if (labelLow.includes(skill.toLowerCase())) return String(years);
+  }
+  return null;
 }
 
 // Find the option that best matches an answer: exact match first, then substring either way.
@@ -637,7 +659,7 @@ async function answer_questions(
 
       if (!prevValue || questions.overwrite_previous_answers) {
         if (labelLow.includes("experience") || labelLow.includes("years")) {
-          answer = questions.years_of_experience;
+          answer = skill_years(labelLow) ?? questions.years_of_experience;
         } else if (labelLow.includes("phone") || labelLow.includes("mobile")) {
           answer = personals.phone_number;
         } else if (labelLow.includes("street")) {
@@ -681,43 +703,7 @@ async function answer_questions(
           answer = answer_common_questions(labelLow, answer);
         }
 
-        if (!answer && secrets.use_AI && aiClient) {
-          try {
-            if (secrets.ai_provider === "openai") {
-              answer = await _ai_answer_question(
-                aiClient,
-                labelOrg,
-                null,
-                'text',
-                jobDescription || undefined,
-                null,
-                questions.user_information_all,
-              );
-            } else if (secrets.ai_provider === "deepseek") {
-              answer = await _deepseek_answer_question(
-                aiClient,
-                labelOrg,
-                null,
-                'text',
-                jobDescription || undefined,
-                null,
-                questions.user_information_all,
-              );
-            } else if (secrets.ai_provider === "gemini") {
-              answer = await _gemini_answer_question(
-                aiClient,
-                labelOrg,
-                null,
-                'text',
-                jobDescription || undefined,
-                null,
-                questions.user_information_all,
-              );
-            }
-          } catch (e) {
-            print_lg("Failed to get AI answer!", e as any);
-          }
-        }
+        if (!answer) answer = await ask_ai(labelOrg, null, 'text', jobDescription);
 
         await textInput.click({ clickCount: 3 });
         await textInput.type(String(answer ?? ""));
@@ -744,43 +730,7 @@ async function answer_questions(
         if (labelLow.includes("summary")) answer = questions.linkedin_summary;
         else if (labelLow.includes("cover")) answer = questions.cover_letter;
 
-        if (!answer && secrets.use_AI && aiClient) {
-          try {
-            if (secrets.ai_provider === "openai") {
-              answer = await _ai_answer_question(
-                aiClient,
-                labelOrg,
-                null,
-                'textarea',
-                jobDescription || undefined,
-                null,
-                questions.user_information_all,
-              );
-            } else if (secrets.ai_provider === "deepseek") {
-              answer = await _deepseek_answer_question(
-                aiClient,
-                labelOrg,
-                null,
-                'textarea',
-                jobDescription || undefined,
-                null,
-                questions.user_information_all,
-              );
-            } else if (secrets.ai_provider === "gemini") {
-              answer = await _gemini_answer_question(
-                aiClient,
-                labelOrg,
-                null,
-                'textarea',
-                jobDescription || undefined,
-                null,
-                questions.user_information_all,
-              );
-            }
-          } catch (e) {
-            print_lg("Failed to get AI answer!", e as any);
-          }
-        }
+        if (!answer) answer = await ask_ai(labelOrg, null, 'textarea', jobDescription);
 
         await textArea.click({ clickCount: 3 });
         await textArea.type(String(answer ?? ""));
@@ -1011,7 +961,7 @@ async function apply_to_jobs(searchTerms: string[]): Promise<void> {
           continue;
         }
 
-        if (secrets.use_AI && description !== "Unknown") {
+        if (secrets.use_AI && settings.extract_skills && description !== "Unknown") {
           try {
             if (secrets.ai_provider === "openai") {
               skills = await _ai_extract_skills(aiClient, description);

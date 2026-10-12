@@ -1,7 +1,7 @@
 
 
 import OpenAI from 'openai';
-import { use_AI, llm_api_url, llm_api_key, llm_model, llm_spec, stream_output } from '../../config/secrets';
+import { use_AI, llm_api_url, llm_api_key, llm_model, llm_spec, llm_reasoning_effort, stream_output } from '../../config/secrets';
 import { showAiErrorAlerts } from '../../config/settings';
 import { print_lg, critical_error_log, convert_to_json } from '../helpers';
 import { extract_skills_prompt, extract_skills_response_format, ai_answer_prompt } from './prompts';
@@ -101,6 +101,11 @@ function model_supports_temperature(model_name: string): boolean {
   return ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini"].includes(model_name);
 }
 
+// Reasoning models bill hidden reasoning tokens; form answers don't need deep reasoning
+function is_reasoning_model(model_name: string): boolean {
+  return /^(gpt-5|o1|o3|o4)/.test(model_name);
+}
+
 // Function to get chat completion from OpenAI API
 export async function ai_completion(
   client: OpenAI,
@@ -115,6 +120,9 @@ export async function ai_completion(
 
   if (model_supports_temperature(llm_model)) {
     params.temperature = temperature;
+  }
+  if (llm_reasoning_effort && is_reasoning_model(llm_model)) {
+    params.reasoning_effort = llm_reasoning_effort;
   }
   if (response_format && (llm_spec === "openai" || llm_spec === "openai-like")) {
     params.response_format = response_format;

@@ -56,3 +56,6 @@ export const stream_output = process.env.STREAM_OUTPUT === "true";              
 /**
  * Set `stream_output = True` if you want to stream AI output or `stream_output = False` if not.
  */
+
+// Reasoning effort for reasoning models (gpt-5*, o1/o3/o4*). Lower = fewer hidden reasoning tokens = cheaper.
+export const llm_reasoning_effort = process.env.LLM_REASONING_EFFORT || "low";      // "low", "medium", "high" or "" to use the model default

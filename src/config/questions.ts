@@ -6,6 +6,11 @@ export const default_resume_path = process.env.DEFAULT_RESUME_PATH || "all resum
 
 export const years_of_experience = process.env.YEARS_OF_EXPERIENCE || "4";          // A number in quotes Eg: "0","1","2","3","4", etc.
 
+// Years of experience per skill, used for "How many years of experience with X?" questions without calling AI.
+// Example: SKILL_EXPERIENCE={"node":4,"react":3,"typescript":3,"aws":2}
+const skillExperienceEnv = process.env.SKILL_EXPERIENCE;
+export const skill_experience: Record<string, number> = skillExperienceEnv ? JSON.parse(skillExperienceEnv) : {};
+
 export const require_visa = process.env.REQUIRE_VISA || "No";               // "Yes" or "No"
 
 export const desired_salary = parseInt(process.env.DESIRED_SALARY || "1200000");          // 80000, 90000, 100000 or 120000 and so on... Do NOT use quotes

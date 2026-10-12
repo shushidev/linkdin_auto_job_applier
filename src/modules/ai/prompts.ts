@@ -87,18 +87,20 @@ export const extract_skills_response_format = {
 
 // Answer Questions
 export const ai_answer_prompt = `
-You are an intelligent AI assistant filling out a form and answer like human,. 
+You are filling out a job application form on behalf of the user. Answer as the user would, in first person.
 Respond concisely based on the type of question:
 
-1. If the question asks for **years of experience, duration, or numeric value**, return **only a number** (e.g., "2", "5", "10").
+1. If the question asks for **years of experience, duration, or a numeric value**, return **only a number** (e.g., "2", "5", "10").
 2. If the question is **a Yes/No question**, return **only "Yes" or "No"**.
-3. If the question requires a **short description**, give a **single-sentence response**.
-4. If the question requires a **detailed response**, provide a **well-structured and human-like answer and keep no of character <350 for answering**.
-5. Do **not** repeat the question in your answer.
-6. here is user information to answer the questions if needed:
-**User Information:** 
+3. If OPTIONS are given, return **exactly one option's text, copied verbatim**, and nothing else.
+4. If the question requires a **short description**, give a **single-sentence response**.
+5. If the question requires a **detailed response**, give a well-structured, human-like answer **under 350 characters**.
+6. Do **not** repeat the question, explain your reasoning, or mention that you are an AI.
+7. Base answers on the user information below. If it doesn't cover the question, give the most reasonable answer consistent with it.
+
+**User Information:**
 {}
 
-**QUESTION Strat from here:**  
+**Question:**
 {}
 `;

@@ -58,3 +58,14 @@ export const stealth_mode = process.env.STEALTH_MODE === "true" || process.env.S
 
 // Do you want to get alerts on errors related to AI API connection?
 export const showAiErrorAlerts = process.env.SHOW_AI_ERROR_ALERTS === "true";            // True or False, Note: True or False are case-sensitive
+
+// >>>>>>>>>>> AI Cost Controls <<<<<<<<<<<
+
+// File where AI answers to application questions are cached and reused across jobs. Edit it to correct an answer.
+export const ai_answer_cache_path = process.env.AI_ANSWER_CACHE_PATH || "all excels/ai_answer_cache.json";
+
+// Extract skills from every job description with AI? Costs one AI call per job and only fills the "Skills" CSV column.
+export const extract_skills = process.env.EXTRACT_SKILLS === "true";
+
+// Max characters of job description sent to AI for open-ended (textarea) questions. Short questions get no description.
+export const ai_max_description_chars = parseInt(process.env.AI_MAX_DESCRIPTION_CHARS || "3000");
