@@ -187,6 +187,40 @@ function answer_common_questions(label: string, answer: string): string {
   return answer;
 }
 
+// Ask the configured AI provider to answer a form question. Returns "" if AI is disabled or fails.
+async function ask_ai(
+  label: string,
+  options: string[] | null,
+  questionType: 'text' | 'textarea' | 'single_select' | 'multiple_select',
+  jobDescription: string | null,
+): Promise<string> {
+  if (!secrets.use_AI || !aiClient) return "";
+  const answerFn =
+    secrets.ai_provider === "openai" ? _ai_answer_question :
+    secrets.ai_provider === "deepseek" ? _deepseek_answer_question :
+    secrets.ai_provider === "gemini" ? _gemini_answer_question : null;
+  if (!answerFn) return "";
+  try {
+    const answer = await answerFn(aiClient, label, options, questionType, jobDescription || undefined, null, questions.user_information_all);
+    return String(answer ?? "").trim();
+  } catch (e) {
+    print_lg("Failed to get AI answer!", e as any);
+    return "";
+  }
+}
+
+// Find the option that best matches an answer: exact match first, then substring either way.
+function match_option(options: string[], answer: string): number {
+  const ans = answer.trim().toLowerCase();
+  if (!ans) return -1;
+  const exact = options.findIndex(o => o.trim().toLowerCase() === ans);
+  if (exact !== -1) return exact;
+  return options.findIndex(o => {
+    const opt = o.trim().toLowerCase();
+    return !!opt && (opt.includes(ans) || ans.includes(opt));
+  });
+}
+
 async function set_search_location(): Promise<void> {
   const loc = search.search_location.trim();
   if (!loc) return;
@@ -224,7 +258,7 @@ async function apply_filters(): Promise<void> {
     await multi_sel_noWait(page, search.on_site);
     if (search.job_type.length || search.on_site.length) await buffer(recommended_wait);
 
-    if (search.easy_apply_only) await boolean_button_click(page, "Easy Apply");
+    // Easy Apply is applied via the f_AL URL param in build_search_url; clicking the toggle here would turn it off
 
     await multi_sel_noWait(page, search.location);
     await multi_sel_noWait(page, search.industry);
@@ -392,7 +426,7 @@ function extract_years_of_experience(text: string): number {
     print_lg(`\n${text}\n\nCouldn't find experience requirement in About the Job!`);
     return 0;
   }
-  return Math.max(...matches);
+  return Math.min(...matches);
 }
 
 async function get_job_description(): Promise<{
@@ -511,11 +545,12 @@ async function answer_questions(
           answer = answer_common_questions(labelLow, answer);
         }
 
-        // Try to choose matching option text
-        let chosen = optionsText.find(o => o.trim() === answer);
-        if (!chosen) {
-          const cand = optionsText.find(o => o.toLowerCase().includes(answer.toLowerCase()) || answer.toLowerCase().includes(o.toLowerCase()));
-          if (cand) chosen = cand;
+        // Try to choose matching option text, asking AI if the rule-based answer matches nothing
+        const realOptions = optionsText.filter(o => o.trim() && o.trim() !== "Select an option");
+        let chosen: string | undefined = optionsText[match_option(optionsText, answer)];
+        if (!chosen && realOptions.length) {
+          const aiAnswer = await ask_ai(labelOrg, realOptions, 'single_select', jobDescription);
+          chosen = optionsText[match_option(optionsText, aiAnswer)];
         }
         if (!chosen && optionsText.length > 1) {
           // fallback random pick (but deterministic-ish): pick second option
@@ -557,13 +592,18 @@ async function answer_questions(
               (await optionLabel.evaluate((el: any) => el && (el.innerText ?? el.textContent) || "")) || "Unknown";
           }
         }
-        optionsLabels.push(`"${optionLabelText}"`);
+        optionsLabels.push(optionLabelText.trim());
       }
 
       if (questions.overwrite_previous_answers || !prevAnswer) {
         answer = answer_common_questions(labelLow, answer);
-        // Try to click label matching answer
-        let foundIndex = optionsLabels.findIndex(o => o.toLowerCase().includes(answer.toLowerCase()));
+        // Try to click label matching answer, asking AI if the rule-based answer matches nothing
+        let foundIndex = match_option(optionsLabels, answer);
+        if (foundIndex === -1 && optionsLabels.length > 0) {
+          const aiAnswer = await ask_ai(labelOrg, optionsLabels, 'single_select', jobDescription);
+          foundIndex = match_option(optionsLabels, aiAnswer);
+          if (foundIndex !== -1) answer = optionsLabels[foundIndex];
+        }
         if (foundIndex === -1 && optionsLabels.length > 0) {
           foundIndex = 0;
           answer = optionsLabels[0];
@@ -875,6 +915,19 @@ async function submitted_jobs(
 
 // ===== Main job application loop (simplified port) =====
 
+// Build the LinkedIn job search URL for a term, encoding date posted, sort order and Easy Apply as URL filters
+function build_search_url(term: string): string {
+  const params = new URLSearchParams({ keywords: term, origin: "JOB_SEARCH_PAGE_JOB_FILTER", refresh: "true" });
+  const loc = search.search_location.trim();
+  if (loc) params.set("location", loc);
+  const datePosted: Record<string, string> = { "Past 24 hours": "r86400", "Past week": "r604800", "Past month": "r2592000" };
+  if (datePosted[search.date_posted]) params.set("f_TPR", datePosted[search.date_posted]);
+  const sortBy: Record<string, string> = { "Most recent": "DD", "Most relevant": "R" };
+  if (sortBy[search.sort_by]) params.set("sortBy", sortBy[search.sort_by]);
+  if (search.easy_apply_only) params.set("f_AL", "true");
+  return `https://www.linkedin.com/jobs/search/?${params.toString()}`;
+}
+
 async function apply_to_jobs(searchTerms: string[]): Promise<void> {
   _applied_jobs = _get_applied_job_ids();
   _rejected_jobs = new Set();
@@ -889,7 +942,7 @@ async function apply_to_jobs(searchTerms: string[]): Promise<void> {
   }
 
   for (const term of terms) {
-    await page.goto(`https://www.linkedin.com/jobs/search/?currentJobId=4380312341&distance=25&f_AL=true&f_TPR=r86400&geoId=102713980&keywords=backend%20developer%20node%20js&origin=JOB_SEARCH_PAGE_JOB_FILTER&refresh=true&sortBy=R`);
+    await page.goto(build_search_url(term));
     print_lg("\n________________________________________________________________________________________________________________________\n");
     print_lg(`\n>>>> Now searching for "${term}" <<<<\n\n`);
 
